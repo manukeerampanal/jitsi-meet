@@ -120,109 +120,6 @@ function connect(roomName) {
 }
 
 /**
- * FIXME convert to non-static method since it depends on the conference
- * instance.
- *
- * Creates local media tracks and connects to room. Will show error
- * dialogs in case if accessing local microphone and/or camera failed. Will
- * show guidance overlay for users on how to give access to camera and/or
- * microphone.
- * @param {Conference} conference
- * @param {string} roomName
- * @param {boolean} startScreenSharing - if <tt>true</tt> should start with
- * screensharing instead of camera video.
- * @returns {Promise.<JitsiLocalTrack[], JitsiConnection>}
- */
-function createInitialLocalTracksAndConnect(
-    conference, roomName, startScreenSharing) {
-
-    let audioAndVideoError,
-        audioOnlyError,
-        screenSharingError,
-        videoOnlyError;
-
-    JitsiMeetJS.mediaDevices.addEventListener(
-        JitsiMeetJS.events.mediaDevices.PERMISSION_PROMPT_IS_SHOWN,
-        browser =>
-            APP.store.dispatch(
-                mediaPermissionPromptVisibilityChanged(true, browser))
-    );
-
-    // First try to retrieve both audio and video.
-    let tryCreateLocalTracks;
-
-    // FIXME the logic about trying to go audio only on error is duplicated
-    if (startScreenSharing) {
-        tryCreateLocalTracks = conference._createDesktopTrack().then(
-            desktopStream => {
-                return createLocalTracks({ devices: ['audio'] }, true)
-                    .then(([audioStream]) => {
-                        return [desktopStream, audioStream];
-                    })
-                    .catch(error => {
-                        audioOnlyError = error;
-                        return [desktopStream];
-                    });
-            }).catch(error => {
-                logger.error('Failed to obtain desktop stream', error);
-                screenSharingError = error;
-                return createLocalTracks({ devices: ['audio'] }, true);
-            }).catch(error => {
-                audioOnlyError = error;
-                return [];
-            });
-    } else {
-        tryCreateLocalTracks = createLocalTracks(
-            { devices: ['audio', 'video'] }, true)
-        .catch(err => {
-            // If failed then try to retrieve only audio.
-            audioAndVideoError = err;
-            return createLocalTracks({ devices: ['audio'] }, true);
-        })
-        .catch(err => {
-            audioOnlyError = err;
-
-            // Try video only...
-            return createLocalTracks({ devices: ['video'] }, true);
-            })
-        .catch( err=> {
-            videoOnlyError = err;
-            return [];
-        });}
-
-    return Promise.all([ tryCreateLocalTracks, connect(roomName) ])
-        .then(([tracks, con]) => {
-            APP.store.dispatch(mediaPermissionPromptVisibilityChanged(false));
-            if (audioAndVideoError || audioOnlyError) {
-                if (audioOnlyError || videoOnlyError) {
-                    // If both requests for 'audio' + 'video' and 'audio' only
-                    // failed, we assume that there is some problems with user's
-                    // microphone and show corresponding dialog.
-                    APP.UI.showDeviceErrorDialog(
-                        audioOnlyError, videoOnlyError);
-                } else {
-                    // If request for 'audio' + 'video' failed, but request for
-                    // 'audio' only was OK, we assume that we had problems with
-                    // camera and show corresponding dialog.
-                    APP.UI.showDeviceErrorDialog(null, audioAndVideoError);
-                }
-            }
-            // FIXME If there was a screen sharing error or the extension needs
-            // to be installed it will appear on top of eventual "microphone
-            // error" dialog. That is not great, but currently it's pretty hard
-            // to chain dialogs since they don't return Promises.
-            if (screenSharingError) {
-                // FIXME if _handleScreenSharingError will be dealing with
-                // installing external extension it may close previously opened
-                // microphone dialog ($.prompt.close(); is called).
-                conference._handleScreenSharingError(screenSharingError);
-            }
-
-            return [tracks, con];
-        });
-}
-
-/**
  * Share data to other users.
  * @param command the command
  * @param {string} value new value
@@ -589,6 +486,106 @@ export default {
      * Whether the local participant is the dominant speaker in the conference.
      */
     isDominantSpeaker: false,
+
+    /**
+     * Creates local media tracks and connects to room. Will show error
+     * dialogs in case if accessing local microphone and/or camera failed. Will
+     * show guidance overlay for users on how to give access to camera and/or
+     * microphone.
+     * @param {string} roomName
+     * @param {boolean} startScreenSharing - if <tt>true</tt> should start with
+     * screensharing instead of camera video.
+     * @returns {Promise.<JitsiLocalTrack[], JitsiConnection>}
+     */
+    createInitialLocalTracksAndConnect(roomName, startScreenSharing) {
+
+        let audioAndVideoError,
+            audioOnlyError,
+            screenSharingError,
+            videoOnlyError;
+
+        JitsiMeetJS.mediaDevices.addEventListener(
+            JitsiMeetJS.events.mediaDevices.PERMISSION_PROMPT_IS_SHOWN,
+            browser =>
+                APP.store.dispatch(
+                    mediaPermissionPromptVisibilityChanged(true, browser))
+        );
+
+        // First try to retrieve both audio and video.
+        let tryCreateLocalTracks;
+
+        // FIXME the logic about trying to go audio only on error is duplicated
+        if (startScreenSharing) {
+            tryCreateLocalTracks = this._createDesktopTrack().then(
+                desktopStream => {
+                    return createLocalTracks({ devices: ['audio'] }, true)
+                        .then(([audioStream]) => {
+                            return [desktopStream, audioStream];
+                        })
+                        .catch(error => {
+                            audioOnlyError = error;
+                            return [desktopStream];
+                        });
+                }).catch(error => {
+                    logger.error('Failed to obtain desktop stream', error);
+                    screenSharingError = error;
+                    return createLocalTracks({ devices: ['audio'] }, true);
+                }).catch(error => {
+                    audioOnlyError = error;
+                    return [];
+                });
+        } else {
+            tryCreateLocalTracks = createLocalTracks(
+                { devices: ['audio', 'video'] }, true)
+                .catch(err => {
+                    // If failed then try to retrieve only audio.
+                    audioAndVideoError = err;
+                    return createLocalTracks({ devices: ['audio'] }, true);
+                })
+                .catch(err => {
+                    audioOnlyError = err;
+
+                    // Try video only...
+                    return createLocalTracks({ devices: ['video'] }, true);
+                })
+                .catch( err=> {
+                    videoOnlyError = err;
+                    return [];
+                });
+        }
+
+        return Promise.all([ tryCreateLocalTracks, connect(roomName) ])
+        .then(([tracks, con]) => {
+            APP.store.dispatch(mediaPermissionPromptVisibilityChanged(false));
+            if (audioAndVideoError || audioOnlyError) {
+                if (audioOnlyError || videoOnlyError) {
+                    // If both requests for 'audio' + 'video' and 'audio' only
+                    // failed, we assume that there is some problems with user's
+                    // microphone and show corresponding dialog.
+                    APP.UI.showDeviceErrorDialog(
+                        audioOnlyError, videoOnlyError);
+                } else {
+                    // If request for 'audio' + 'video' failed, but request for
+                    // 'audio' only was OK, we assume that we had problems with
+                    // camera and show corresponding dialog.
+                    APP.UI.showDeviceErrorDialog(null, audioAndVideoError);
+                }
+            }
+            // FIXME If there was a screen sharing error or the extension needs
+            // to be installed it will appear on top of eventual "microphone
+            // error" dialog. That is not great, but currently it's pretty hard
+            // to chain dialogs since they don't return Promises.
+            if (screenSharingError) {
+                // FIXME if _handleScreenSharingError will be dealing with
+                // installing external extension it may close previously opened
+                // microphone dialog ($.prompt.close(); is called).
+                this._handleScreenSharingError(screenSharingError);
+            }
+
+            return [tracks, con];
+        });
+    },
+
     /**
      * Open new connection and join to the conference.
      * @param {object} options
@@ -624,8 +621,8 @@ export default {
                 {enableAnalyticsLogging: analytics.isEnabled()}, config)
             ).then(() => {
                 analytics.init();
-                return createInitialLocalTracksAndConnect(
-                    this, options.roomName, config.startScreenSharing);
+                return this.createInitialLocalTracksAndConnect(
+                    options.roomName, config.startScreenSharing);
             }).then(([tracks, con]) => {
                 tracks.forEach(track => {
                     if((track.isAudioTrack() && initialAudioMutedState)
