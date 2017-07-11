@@ -26,6 +26,7 @@ import {
     conferenceFailed,
     conferenceJoined,
     conferenceLeft,
+    toggleAudioOnly,
     EMAIL_COMMAND,
     lockStateChanged
 } from './react/features/base/conference';
@@ -493,11 +494,14 @@ export default {
      * show guidance overlay for users on how to give access to camera and/or
      * microphone.
      * @param {string} roomName
-     * @param {boolean} startScreenSharing - if <tt>true</tt> should start with
-     * screensharing instead of camera video.
+     * @param {boolean} [startScreenSharing=false] - if <tt>true</tt>
+     * the conference should start with screensharing instead of camera video.
+     * @param {boolean} [startAudioOnly=false] - if <tt>true</tt> then only
+     * audio track will be created and the audio only mode will be turned on.
      * @returns {Promise.<JitsiLocalTrack[], JitsiConnection>}
      */
-    createInitialLocalTracksAndConnect(roomName, startScreenSharing) {
+    createInitialLocalTracksAndConnect(
+        roomName, startScreenSharing = false, startAudioOnly = false) {
 
         let audioAndVideoError,
             audioOnlyError,
@@ -514,8 +518,22 @@ export default {
         // First try to retrieve both audio and video.
         let tryCreateLocalTracks;
 
+        // FIXME there is no video muted indication visible on the remote side,
+        // after starting in audio only (there's no video track)
         // FIXME the logic about trying to go audio only on error is duplicated
-        if (startScreenSharing) {
+        if (startAudioOnly) {
+            tryCreateLocalTracks
+                = createLocalTracks({ devices: ['audio'] }, true)
+                    .catch(err => {
+                        audioOnlyError = err;
+
+                        return [];
+                    });
+            // Enable audio only mode
+            if (!this.isAudioOnly()) {
+                APP.store.dispatch(toggleAudioOnly());
+            }
+        } else if (startScreenSharing) {
             tryCreateLocalTracks = this._createDesktopTrack().then(
                 desktopStream => {
                     return createLocalTracks({ devices: ['audio'] }, true)
@@ -620,7 +638,9 @@ export default {
             ).then(() => {
                 analytics.init();
                 return this.createInitialLocalTracksAndConnect(
-                    options.roomName, config.startScreenSharing);
+                    options.roomName,
+                    config.startScreenSharing,
+                    config.startAudioOnly);
             }).then(([tracks, con]) => {
                 tracks.forEach(track => {
                     if((track.isAudioTrack() && initialAudioMutedState)
@@ -1065,6 +1085,10 @@ export default {
             options.recordingType = (config.hosts &&
                 (typeof config.hosts.jirecon != "undefined"))?
                 "jirecon" : "colibri";
+        }
+        // Initialize in audio only mode
+        if (this.isAudioOnly()) {
+            options.channelLastN = 0;
         }
         return options;
     },
